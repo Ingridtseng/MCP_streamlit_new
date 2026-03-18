@@ -963,14 +963,14 @@ with left_col:
                             )
 
                             # 顯示圖表
-                            st.plotly_chart(fig, width=True, config={'displayModeBar': False})
+                            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
                     
                     
                     # E. 顯示表格
                     title_text = f"📋 統計數據表：{', '.join(product_keywords)}" if product_keywords else "📋 統計數據表"
                     st.subheader(title_text)
-                    st.dataframe(final_table, width=True, hide_index=True)
+                    st.dataframe(final_table, use_container_width=True, hide_index=True)
 
                 elif sql_query: 
                     st.warning("查無相關數據 (SQL 執行結果為空)")
@@ -1150,7 +1150,7 @@ with right_col:
         
         
         # 渲染圖表
-        st.plotly_chart(fig, width=True, config={'displayModeBar': False})
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1249,7 +1249,7 @@ with right_col:
                 trace.line.color = colors[i % len(colors)]
                 trace.marker.color = colors[i % len(colors)]
             
-            st.plotly_chart(fig_trend_main, width=True)
+            st.plotly_chart(fig_trend_main, use_container_width=True)
             
             # 記錄大分類趨勢圖到對話歷史
             if st.session_state.chat_history:
@@ -1343,7 +1343,7 @@ with right_col:
                 trace.marker.color = colors[i % len(colors)]
                 trace.line.width = 3 # 粗一點比較亮
             
-            st.plotly_chart(fig_trend, width=True)
+            st.plotly_chart(fig_trend, use_container_width=True)
             
         else:
             st.warning("暫無中分類趨勢數據")
@@ -1424,7 +1424,7 @@ with right_col:
             margin=dict(l=10, r=10, t=10, b=10),
             coloraxis_showscale=False
         )
-        st.plotly_chart(fig_treemap, width=True)
+        st.plotly_chart(fig_treemap, use_container_width=True)
         
     else:
         st.warning("暫無數據")
