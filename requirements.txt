@@ -1,0 +1,22 @@
+# 03. 安裝套件 - 基本
+streamlit
+pandas
+plotly
+numpy
+
+# 04. MCP 伺服器套件
+mcp
+anthropic
+
+# 05. MCP 語音套件
+streamlit-mic-recorder
+openai
+
+# 06. duckdb SQL 套件
+duckdb
+
+# 07. xlsx 處理套件
+openpyxl
+
+# 08. 顧問導讀需要的
+tabulate
