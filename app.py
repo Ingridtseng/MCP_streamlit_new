@@ -8,6 +8,31 @@ from dotenv import load_dotenv
 import re
 import base64
 
+# 1. 關鍵修復：確保 session_state 裡有這個 key
+if "password" not in st.session_state:
+    st.session_state["password"] = ""  # 給它一個初始空字串
+def check_password():
+    """回傳 True 如果密碼正確"""
+    def password_entered():
+        # 這裡就不會再噴 KeyError 了，因為我們初始化過了
+        if st.session_state["password"] == "88888":
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # 密碼正確後刪除，安全起見
+        else:
+            st.session_state["password_correct"] = False
+
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # 顯示密碼輸入框
+    st.text_input("請輸入密碼", type="password", on_change=password_entered, key="password")
+    
+    if "password_correct" in st.session_state:
+        st.error("😕 密碼錯誤，請再試一次")
+    return False
+
+if not check_password():
+    st.stop()  # 密碼不對就停止執行後面的程式碼
 # --- 密碼驗證功能 ---
 def check_password():
     """回傳 True 代表密碼正確"""
@@ -592,11 +617,16 @@ def get_smart_trend_data(target_table, target_tag, city_name=None):
     else:
         # 如果是 None 或是全台灣，則不加入城市過濾條件，即查詢全台數據
         city_filter = ""
-    
-    # 2. 核心邏輯：判定類別過濾條件
-    if target_table == 'main_category_summary' and target_tag:
-        # 指定大類 -> 鎖定該大類
-        parent_cat_filter = f"WHERE category = '{target_tag}'"
+
+    # 【核心修正】：不要精準比對 table 名稱，改用關鍵字包含
+    target_table_lower = str(target_table).lower()
+    if ("main" in target_table_lower or "category" in target_table_lower) and "sub" not in target_table_lower:
+        # 這裡用 LIKE 模糊比對，預防「食品」與「食品類」的差異
+        parent_cat_filter = f"WHERE category LIKE '%{target_tag}%'"
+    # # 2. 核心邏輯：判定類別過濾條件
+    # if target_table == 'main_category_summary' and target_tag:
+    #     # 指定大類 -> 鎖定該大類
+    #     parent_cat_filter = f"WHERE category = '{target_tag}'"
     elif target_table == 'sub_category' and target_tag:
         # 指定中類 -> 反查其所屬大類
         sql_get_parent = f"SELECT category FROM sub_category WHERE subcategory = '{target_tag}' LIMIT 1"
@@ -615,19 +645,41 @@ def get_smart_trend_data(target_table, target_tag, city_name=None):
 
     # 3. 最終 SQL 組裝
     # 使用 NULLIF 避免分母為 0
+    # sql = f"""
+    # SELECT 
+    #     month,
+    #     subcategory,
+    #     SUM(inv_cnt) * 1.0 / NULLIF(SUM(SUM(inv_cnt)) OVER (PARTITION BY month), 0) as ratio
+    # FROM sub_category
+    # {parent_cat_filter}
+    # AND subcategory NOT LIKE '%其他%'
+    # {city_filter}
+    # GROUP BY month, subcategory
+    # ORDER BY month ASC
+    # """
+    # 3. 最終 SQL 組裝 (修正 DuckDB 巢狀聚合報錯)
     sql = f"""
+    WITH monthly_grouped AS (
+        -- 第一步：先算出每個月份、每個中類的加總金額
+        SELECT 
+            month,
+            subcategory,
+            SUM(inv_cnt) as sub_total
+        FROM sub_category
+        {parent_cat_filter}
+        AND subcategory IS NOT NULL
+        AND subcategory NOT LIKE '%其他%'
+        {city_filter}
+        GROUP BY month, subcategory
+    )
+    -- 第二步：再計算該中類佔該月份總額的比例
     SELECT 
         month,
         subcategory,
-        SUM(inv_cnt) * 1.0 / NULLIF(SUM(SUM(inv_cnt)) OVER (PARTITION BY month), 0) as ratio
-    FROM sub_category
-    {parent_cat_filter}
-    AND subcategory NOT LIKE '%其他%'
-    {city_filter}
-    GROUP BY month, subcategory
+        sub_total * 1.0 / NULLIF(SUM(sub_total) OVER (PARTITION BY month), 0) as ratio
+    FROM monthly_grouped
     ORDER BY month ASC
     """
-    
     return query_data_via_duckdb(sql)
 
 def get_trend_data(table_name, target_col, city_name=None):

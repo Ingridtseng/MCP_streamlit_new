@@ -17,10 +17,73 @@ anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 # --- 全域變數：只會加載一次 ---
 
 @st.cache_resource
+# def init_resources():
+#     """
+#     初始化所有靜態資源：
+#     1. 載入銷售數據到 DuckDB
+#     2. 載入分類描述檔並轉換為 AI 導航地圖 (Semantic Index)
+#     """
+#     print("⏳ [System] 正在初始化資源 (SQL 數據庫 & AI 導航地圖)...")
+#     base_path = os.path.dirname(os.path.abspath(__file__))
+    
+#     # 1. 建立記憶體資料庫連線
+#     con = duckdb.connect(database=':memory:')
+    
+#     # 加載銷售數據表
+#     data_files = {
+#         'city_summary': 'city_summary.xlsx',
+#         'main_category_summary': 'main_category_summary.xlsx',
+#         'sub_category': 'sub_category.xlsx'
+#     }
+    
+#     for table_name, file_name in data_files.items():
+#         path = os.path.join(base_path, file_name)
+#         if os.path.exists(path):
+#             df_tmp = pd.read_excel(path)
+#             # 預處理：統一「台」字與空白
+#             if 'city' in df_tmp.columns:
+#                 df_tmp['city_clean'] = df_tmp['city'].astype(str).str.strip().str.replace('臺', '台')
+#             for col in ['category', 'subcategory']:
+#                 if col in df_tmp.columns:
+#                     df_tmp[col] = df_tmp[col].astype(str).str.strip()
+#             con.register(table_name, df_tmp)
+    
+#     # 2. 處理「AI 導航地圖」(原本的 category_des.xlsx)
+#     # 我們在這裡就把 Excel 轉成 AI 讀得懂的字串，並快取起來
+#     dict_path = os.path.join(base_path, 'category_des.xlsx')
+#     nav_map_str = "字典讀取失敗或檔案不存在。"
+    
+#     if os.path.exists(dict_path):
+#         df_def = pd.read_excel(dict_path).fillna('')
+#         knowledge_list = []
+#         for _, row in df_def.iterrows():
+#             c_val = str(row.get('category', '')).strip()
+#             s_val = str(row.get('subcategory', '')).strip()
+#             desc = str(row.get('description', '')).strip()
+            
+#             # 💡 這裡加上更明確的路由標記
+#             if s_val and s_val.lower() != 'nan':
+#                 # 注意：中類對應表格 sub_category，欄位是 subcategory
+#                 entry = f"- [中類] 名稱: '{s_val}', 對應表: sub_category, 欄位: subcategory, 涵蓋內容: {desc}"
+#                 knowledge_list.append(entry)
+#             elif c_val and c_val.lower() != 'nan':
+#                 # 注意：大類對應表格 main_category_summary，欄位是 category
+#                 entry = f"- [大類] 名稱: '{c_val}', 對應表: main_category_summary, 欄位: category, 涵蓋內容: {desc}"
+#                 knowledge_list.append(entry)
+#         nav_map_str = "\n".join(knowledge_list)
+
+#     print("✅ [System] 資源初始化完成。")
+    
+#     # 回傳一個字典包裹所有資源
+#     return {
+#         "db_conn": con,
+#         "ai_nav_map": nav_map_str
+#     }
+@st.cache_resource
 def init_resources():
     """
     初始化所有靜態資源：
-    1. 載入銷售數據到 DuckDB
+    1. 載入銷售數據到 DuckDB (實體 Table 模式)
     2. 載入分類描述檔並轉換為 AI 導航地圖 (Semantic Index)
     """
     print("⏳ [System] 正在初始化資源 (SQL 數據庫 & AI 導航地圖)...")
@@ -39,42 +102,59 @@ def init_resources():
     for table_name, file_name in data_files.items():
         path = os.path.join(base_path, file_name)
         if os.path.exists(path):
-            df_tmp = pd.read_excel(path)
-            # 預處理：統一「台」字與空白
-            if 'city' in df_tmp.columns:
-                df_tmp['city_clean'] = df_tmp['city'].astype(str).str.strip().str.replace('臺', '台')
-            for col in ['category', 'subcategory']:
-                if col in df_tmp.columns:
-                    df_tmp[col] = df_tmp[col].astype(str).str.strip()
-            con.register(table_name, df_tmp)
+            try:
+                df_tmp = pd.read_excel(path)
+                
+                # 預處理：統一「台」字與空白
+                if 'city' in df_tmp.columns:
+                    df_tmp['city_clean'] = df_tmp['city'].astype(str).str.strip().str.replace('臺', '台')
+                
+                for col in ['category', 'subcategory']:
+                    if col in df_tmp.columns:
+                        df_tmp[col] = df_tmp[col].astype(str).str.strip()
+                
+                # --- 【關鍵修正：建立實體表而非虛擬視圖】 ---
+                # 先將 DataFrame 註冊為臨時名稱
+                temp_view_name = f"temp_{table_name}"
+                con.register(temp_view_name, df_tmp)
+                
+                # 使用 SQL 建立真正的 DuckDB Table，這能解決序列化報錯 (PandasScan error)
+                con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM {temp_view_name}")
+                
+                # 建立完實體表後，可以解除註冊臨時名稱以節省空間
+                con.unregister(temp_view_name)
+                print(f"✅ [Table] 已建立實體表: {table_name}")
+                
+            except Exception as e:
+                print(f"❌ [Error] 載入 {file_name} 失敗: {str(e)}")
     
     # 2. 處理「AI 導航地圖」(原本的 category_des.xlsx)
-    # 我們在這裡就把 Excel 轉成 AI 讀得懂的字串，並快取起來
     dict_path = os.path.join(base_path, 'category_des.xlsx')
     nav_map_str = "字典讀取失敗或檔案不存在。"
     
     if os.path.exists(dict_path):
-        df_def = pd.read_excel(dict_path).fillna('')
-        knowledge_list = []
-        for _, row in df_def.iterrows():
-            c_val = str(row.get('category', '')).strip()
-            s_val = str(row.get('subcategory', '')).strip()
-            desc = str(row.get('description', '')).strip()
-            
-            # 💡 這裡加上更明確的路由標記
-            if s_val and s_val.lower() != 'nan':
-                # 注意：中類對應表格 sub_category，欄位是 subcategory
-                entry = f"- [中類] 名稱: '{s_val}', 對應表: sub_category, 欄位: subcategory, 涵蓋內容: {desc}"
-                knowledge_list.append(entry)
-            elif c_val and c_val.lower() != 'nan':
-                # 注意：大類對應表格 main_category_summary，欄位是 category
-                entry = f"- [大類] 名稱: '{c_val}', 對應表: main_category_summary, 欄位: category, 涵蓋內容: {desc}"
-                knowledge_list.append(entry)
-        nav_map_str = "\n".join(knowledge_list)
+        try:
+            df_def = pd.read_excel(dict_path).fillna('')
+            knowledge_list = []
+            for _, row in df_def.iterrows():
+                c_val = str(row.get('category', '')).strip()
+                s_val = str(row.get('subcategory', '')).strip()
+                desc = str(row.get('description', '')).strip()
+                
+                # 路由標記：讓 AI 知道要去哪個表查
+                if s_val and s_val.lower() != 'nan' and s_val != '':
+                    entry = f"- [中類] 名稱: '{s_val}', 對應表: sub_category, 欄位: subcategory, 涵蓋內容: {desc}"
+                    knowledge_list.append(entry)
+                elif c_val and c_val.lower() != 'nan' and c_val != '':
+                    entry = f"- [大類] 名稱: '{c_val}', 對應表: main_category_summary, 欄位: category, 涵蓋內容: {desc}"
+                    knowledge_list.append(entry)
+            nav_map_str = "\n".join(knowledge_list)
+        except Exception as e:
+            nav_map_str = f"字典處理錯誤: {str(e)}"
 
     print("✅ [System] 資源初始化完成。")
     
-    # 回傳一個字典包裹所有資源
+    # 回傳字典包裹資源
     return {
         "db_conn": con,
         "ai_nav_map": nav_map_str
